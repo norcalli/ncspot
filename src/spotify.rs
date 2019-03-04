@@ -12,6 +12,7 @@ use librespot::playback::player::Player;
 
 use rspotify::spotify::client::Spotify as SpotifyAPI;
 use rspotify::spotify::model::search::SearchTracks;
+use rspotify::spotify::model::track::FullTrack;
 
 use failure::Error;
 
@@ -23,19 +24,23 @@ use futures::Future;
 use futures::Stream;
 use tokio_core::reactor::Core;
 
+use log::{debug, info, trace};
+
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::RwLock;
 use std::thread;
 
-use events::{Event, EventManager};
-use queue::Queue;
+use crate::events::{Event, EventManager};
+use crate::queue::Queue;
 
 enum WorkerCommand {
     Load(SpotifyId),
     Play,
     Pause,
     Stop,
+    CheckQueue,
+    Seek(u32),
 }
 
 pub enum PlayerState {
@@ -56,6 +61,7 @@ struct Worker {
     commands: mpsc::UnboundedReceiver<WorkerCommand>,
     player: Player,
     play_task: Box<futures::Future<Item = (), Error = oneshot::Canceled>>,
+    stopped: bool,
     queue: Arc<Mutex<Queue>>,
 }
 
@@ -71,6 +77,7 @@ impl Worker {
             commands: commands,
             player: player,
             play_task: Box::new(futures::empty()),
+            stopped: true,
             queue: queue,
         }
     }
@@ -91,25 +98,38 @@ impl futures::Future for Worker {
                 match cmd {
                     WorkerCommand::Load(track) => {
                         self.play_task = Box::new(self.player.load(track, false, 0));
+                        self.stopped = false;
                         info!("player loading track..");
                     }
                     WorkerCommand::Play => {
                         self.player.play();
-                        self.events.send(Event::Player(PlayerState::Playing));
+                        self.stopped = false;
+                        self.events.send(Event::PlayState(PlayerState::Playing));
                     }
                     WorkerCommand::Pause => {
                         self.player.pause();
-                        self.events.send(Event::Player(PlayerState::Paused));
+                        self.events.send(Event::PlayState(PlayerState::Paused));
                     }
                     WorkerCommand::Stop => {
                         self.player.stop();
-                        self.events.send(Event::Player(PlayerState::Stopped));
+                        self.stopped = true;
+                        self.events.send(Event::PlayState(PlayerState::Stopped));
+                    }
+                    WorkerCommand::Seek(ms) => {
+                        self.player.seek(ms);
+                    }
+                    WorkerCommand::CheckQueue => {
+                        if self.stopped {
+                            self.play_task = Box::new(futures::done(Ok(())));
+                        }
                     }
                 }
             }
             match self.play_task.poll() {
                 Ok(Async::Ready(())) => {
                     debug!("end of track!");
+                    // self.events.send(Event::SongFinish);
+
                     progress = true;
 
                     let mut queue = self.queue.lock().unwrap();
@@ -119,10 +139,12 @@ impl futures::Future for Worker {
                             SpotifyId::from_base62(&track.id).expect("could not load track");
                         self.play_task = Box::new(self.player.load(trackid, false, 0));
                         self.player.play();
+                        self.stopped = false;
 
-                        self.events.send(Event::Player(PlayerState::Playing));
+                        self.events.send(Event::SongChange(track));
+                        self.events.send(Event::PlayState(PlayerState::Playing));
                     } else {
-                        self.events.send(Event::Player(PlayerState::Stopped));
+                        self.events.send(Event::PlayState(PlayerState::Stopped));
                     }
                 }
                 Ok(Async::NotReady) => (),
@@ -162,7 +184,7 @@ impl Spotify {
         {
             let events = events.clone();
             thread::spawn(move || {
-                Self::worker(
+                Spotify::worker(
                     events,
                     rx,
                     p,
@@ -241,6 +263,44 @@ impl Spotify {
     pub fn play(&self) {
         info!("play()");
         self.channel.unbounded_send(WorkerCommand::Play).unwrap();
+    }
+
+    pub fn seek_ms(&self, ms: u32) {
+        info!("seek_ms()");
+        self.channel
+            .unbounded_send(WorkerCommand::Seek(ms))
+            .unwrap();
+    }
+
+    pub fn check_queue(&self) {
+        info!("check_queue()");
+        self.channel
+            .unbounded_send(WorkerCommand::CheckQueue)
+            .unwrap();
+    }
+
+    pub fn is_playing(&self) -> bool {
+        let state = self
+            .state
+            .read()
+            .expect("could not acquire read lock on player state");
+        if let PlayerState::Playing = *state {
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn is_stopped(&self) -> bool {
+        let state = self
+            .state
+            .read()
+            .expect("could not acquire read lock on player state");
+        if let PlayerState::Stopped = *state {
+            true
+        } else {
+            false
+        }
     }
 
     pub fn toggleplayback(&self) {

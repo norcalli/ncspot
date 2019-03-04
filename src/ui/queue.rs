@@ -9,108 +9,98 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use librespot::core::spotify_id::SpotifyId;
+
 use rspotify::spotify::model::track::FullTrack;
 
-use queue::{Queue, QueueChange};
-use spotify::Spotify;
-use ui::trackbutton::TrackButton;
+use crate::events::{Event, EventManager};
+use crate::queue::Queue;
+use crate::spotify::{PlayerState, Spotify};
+use crate::ui::trackbutton::TrackButton;
 
 pub struct QueueView {
-    pub view: Option<Panel<BoxView<BoxView<ScrollView<IdView<LinearLayout>>>>>>, // FIXME: wow
+    pub view: Option<Panel<LinearLayout>>,
     queue: Arc<Mutex<Queue>>,
-    spotify: Arc<Spotify>,
 }
 
+const QUEUE_ID: &str = "queue_list";
+
 impl QueueView {
-    pub fn new(queue: Arc<Mutex<Queue>>, spotify: Arc<Spotify>) -> QueueView {
-        let queuelist = LinearLayout::new(Orientation::Vertical).with_id("queue_list");
-        let scrollable = ScrollView::new(queuelist).full_width().full_height();
-        let panel = Panel::new(scrollable).title("Queue");
+    pub fn new(queue: Arc<Mutex<Queue>>, event_manager: EventManager) -> QueueView {
+        let mut queuelist = OnEventView::new(ListView::new().with_id(QUEUE_ID));
+
+        {
+            let queue = queue.clone();
+            // <d> removes the selected track without playing it.
+            queuelist.set_on_pre_event('c', move |_cursive| {
+                queue.lock().unwrap().clear();
+            });
+        }
+
+        {
+            let queue = queue.clone();
+            let event_manager = event_manager.clone();
+            // <enter> dequeues the selected track
+            queuelist.set_on_pre_event(Key::Enter, move |siv| {
+                siv.call_on_id(QUEUE_ID, |queuelist: &mut ListView| {
+                    let track = queue
+                        .lock()
+                        .unwrap()
+                        .remove(queuelist.focus())
+                        .expect("could not dequeue track");
+                    event_manager.send(Event::SongChange(track));
+                    event_manager.send(Event::QueueUpdate);
+                });
+            });
+        }
+
+        {
+            let queue = queue.clone();
+            let event_manager = event_manager.clone();
+            // <d> removes the selected track without playing it.
+            queuelist.set_on_pre_event('d', move |siv| {
+                siv.call_on_id(QUEUE_ID, |queuelist: &mut ListView| {
+                    queue
+                        .lock()
+                        .unwrap()
+                        .remove(queuelist.focus())
+                        .expect("could not dequeue track");
+                    event_manager.send(Event::QueueUpdate);
+                });
+            });
+        }
+
+        let scrollable = ScrollView::new(queuelist.full_width())
+            .full_width()
+            .full_height();
+        let layout = LinearLayout::new(Orientation::Vertical).child(scrollable);
+        let panel = Panel::new(layout).title("Queue");
 
         QueueView {
             view: Some(panel),
-            queue: queue,
-            spotify: spotify,
+            queue,
         }
     }
 
-    fn cb_delete(cursive: &mut Cursive, queue: &mut Queue) {
-        let view_ref: Option<ViewRef<LinearLayout>> = cursive.find_id("queue_list");
-        if let Some(queuelist) = view_ref {
-            let index = queuelist.get_focus_index();
-            queue.remove(index);
-        }
-    }
+    pub fn redraw(&self, s: &mut Cursive) {
+        s.call_on_id(QUEUE_ID, |queuelist: &mut ListView| {
+            queuelist.clear();
 
-    fn cb_play(cursive: &mut Cursive, queue: &mut Queue, spotify: &Spotify) {
-        let view_ref: Option<ViewRef<LinearLayout>> = cursive.find_id("queue_list");
-        if let Some(queuelist) = view_ref {
-            let index = queuelist.get_focus_index();
-            let track = queue.remove(index).expect("could not dequeue track");
-            let trackid = SpotifyId::from_base62(&track.id).expect("could not load track");
-            spotify.load(trackid);
-            spotify.play();
-        }
-    }
-
-    pub fn handle_ev(&self, cursive: &mut Cursive, ev: QueueChange) {
-        let view_ref: Option<ViewRef<LinearLayout>> = cursive.find_id("queue_list");
-        if let Some(mut queuelist) = view_ref {
-            match ev {
-                QueueChange::Enqueue => {
-                    let queue = self.queue.lock().expect("could not lock queue");
-                    let track = queue.peek().expect("queue is empty");
-                    let button = self.create_button(&track);
-                    queuelist.insert_child(0, button);
-                }
-                QueueChange::Dequeue => {
-                    queuelist.remove_child(0);
-                }
-                QueueChange::Remove(index) => {
-                    queuelist.remove_child(index);
-                }
-                QueueChange::Show => self.populate(&mut queuelist),
+            let queue = self.queue.lock().unwrap();
+            for track in queue.iter() {
+                queuelist.add_child(
+                    "",
+                    TextView::new(format!(
+                        "{} - {}",
+                        track.name,
+                        track
+                            .artists
+                            .iter()
+                            .map(|a| a.name.clone())
+                            .collect::<Vec<String>>()
+                            .join(", ")
+                    )),
+                );
             }
-        }
-    }
-
-    fn create_button(&self, track: &FullTrack) -> TrackButton {
-        let mut button = TrackButton::new(&track);
-        // 'd' deletes the selected track
-        {
-            let queue_ref = self.queue.clone();
-            button.add_callback('d', move |cursive| {
-                Self::cb_delete(
-                    cursive,
-                    &mut queue_ref.lock().expect("could not lock queue"),
-                );
-            });
-        }
-
-        // <enter> dequeues the selected track
-        {
-            let queue_ref = self.queue.clone();
-            let spotify = self.spotify.clone();
-            button.add_callback(Key::Enter, move |cursive| {
-                Self::cb_play(
-                    cursive,
-                    &mut queue_ref.lock().expect("could not lock queue"),
-                    &spotify,
-                );
-            });
-        }
-        button
-    }
-
-    pub fn populate(&self, queuelist: &mut LinearLayout) {
-        while queuelist.len() > 0 {
-            queuelist.remove_child(0);
-        }
-
-        let queue = self.queue.lock().expect("could not lock queue");
-        for track in queue.iter() {
-            let button = self.create_button(&track);
-            queuelist.add_child(button);
-        }
+        });
     }
 }

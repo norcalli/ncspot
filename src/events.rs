@@ -1,12 +1,35 @@
 use crossbeam_channel::{unbounded, Receiver, Sender, TryIter};
 use cursive::{CbFunc, Cursive};
+use derive_more::Display;
 
-use queue::QueueChange;
-use spotify::PlayerState;
+use crate::spotify::PlayerState;
 
+use rspotify::spotify::model::track::FullTrack;
+
+#[derive(Display)]
 pub enum Event {
-    Queue(QueueChange),
-    Player(PlayerState),
+    #[display(fmt = "Event::QueueUpdate")]
+    QueueUpdate,
+    #[display(fmt = "Event::PlayState")]
+    PlayState(PlayerState),
+    #[display(fmt = "Event::Play")]
+    Play(FullTrack),
+    #[display(fmt = "Event::CheckQueue")]
+    CheckQueue,
+    #[display(fmt = "Event::SeekTo")]
+    SeekTo(u32),
+    #[display(fmt = "Event::SeekForward")]
+    SeekForward(u32),
+    #[display(fmt = "Event::SeekBackward")]
+    SeekBackward(u32),
+    #[display(fmt = "Event::QueueAdd")]
+    QueueAdd(FullTrack),
+    #[display(fmt = "Event::QueueRemove")]
+    QueueRemove(usize),
+    #[display(fmt = "Event::SongChange")]
+    SongChange(FullTrack),
+    // #[display(fmt = "Event::SongFinish")]
+    // SongFinish,
 }
 
 pub type EventSender = Sender<Event>;

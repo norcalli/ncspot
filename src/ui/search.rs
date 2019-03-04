@@ -9,9 +9,9 @@ use std::sync::Mutex;
 
 use librespot::core::spotify_id::SpotifyId;
 
-use queue::Queue;
-use spotify::Spotify;
-use ui::trackbutton::TrackButton;
+use crate::queue::Queue;
+use crate::spotify::Spotify;
+use crate::ui::trackbutton::TrackButton;
 
 pub struct SearchView {
     pub view: Panel<LinearLayout>,

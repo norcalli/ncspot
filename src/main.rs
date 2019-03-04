@@ -1,33 +1,23 @@
-extern crate crossbeam_channel;
-extern crate cursive;
-extern crate failure;
-extern crate futures;
-extern crate librespot;
-extern crate rspotify;
-extern crate tokio_core;
-extern crate unicode_width;
-
-#[macro_use]
-extern crate serde_derive;
-extern crate serde;
-extern crate toml;
-
-#[macro_use]
-extern crate log;
-extern crate env_logger;
-
 use std::env;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::path::PathBuf;
 use std::process;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use log::trace;
+
 use cursive::event::Key;
+use cursive::traits::Identifiable;
 use cursive::view::ScrollStrategy;
-use cursive::views::*;
+use cursive::views::{self, *};
 use cursive::Cursive;
+
+use librespot::core::spotify_id::SpotifyId;
+
+use rspotify::spotify::model::track::FullTrack;
 
 mod config;
 mod events;
@@ -36,8 +26,7 @@ mod spotify;
 mod theme;
 mod ui;
 
-use events::{Event, EventManager};
-use queue::QueueChange;
+use crate::events::{Event, EventManager};
 
 fn init_logger(content: TextContent) {
     let mut builder = env_logger::Builder::from_default_env();
@@ -64,36 +53,11 @@ fn init_logger(content: TextContent) {
 }
 
 fn main() {
+    let logbuf = TextContent::new("Welcome to ncspot\n");
+    let logview = TextView::new_with_content(logbuf.clone());
     std::env::set_var("RUST_LOG", "ncspot=trace");
     std::env::set_var("RUST_BACKTRACE", "full");
 
-    // Things here may cause the process to abort; we must do them before creating curses windows
-    // otherwise the error message will not be seen by a user
-    let path = match env::var_os("HOME") {
-        None => {
-            eprintln!("$HOME not set");
-            process::exit(1);
-        }
-        Some(path) => PathBuf::from(format!("{0}/.config/ncspot", path.into_string().unwrap())),
-    };
-
-    let cfg: config::Config = {
-        let contents = std::fs::read_to_string(&path).unwrap_or_else(|_| {
-            eprintln!("Cannot read config file from {}", path.to_str().unwrap());
-            eprintln!(
-                "Expected a config file with this format:\n{}",
-                toml::to_string_pretty(&config::Config::default()).unwrap()
-            );
-            process::exit(1)
-        });
-        toml::from_str(&contents).unwrap_or_else(|e| {
-            eprintln!("{}", e);
-            process::exit(1)
-        })
-    };
-
-    let logbuf = TextContent::new("Welcome to ncspot\n");
-    let logview = TextView::new_with_content(logbuf.clone());
     init_logger(logbuf);
 
     let mut cursive = Cursive::default();
@@ -101,8 +65,16 @@ fn main() {
 
     cursive.add_global_callback('q', |s| s.quit());
     cursive.set_theme(theme::default());
-    cursive.set_autorefresh(true);
 
+    let path = match env::var_os("HOME") {
+        None => {
+            println!("$HOME not set.");
+            process::exit(1)
+        }
+        Some(path) => PathBuf::from(format!("{0}/.config/ncspot", path.into_string().unwrap())),
+    };
+
+    let cfg = config::load(path.to_str().unwrap()).expect("could not load configuration file");
     let queue = Arc::new(Mutex::new(queue::Queue::new(event_manager.clone())));
 
     let spotify = Arc::new(spotify::Spotify::new(
@@ -128,43 +100,236 @@ fn main() {
         });
     }
 
+    {
+        let spotify = spotify.clone();
+        let queue = queue.clone();
+        let event_manager = event_manager.clone();
+        cursive.add_global_callback('>', move |_s| {
+            let mut queue = queue.lock().unwrap();
+            if let Some(track) = queue.dequeue() {
+                let trackid = SpotifyId::from_base62(&track.id).expect("could not load track");
+                spotify.load(trackid);
+                spotify.play();
+                event_manager.send(Event::QueueUpdate);
+                event_manager.send(Event::SongChange(track));
+            } else {
+                spotify.stop();
+            }
+        });
+    }
+
+    let mut statusbar = TextContent::new("");
+
     let searchscreen = cursive.active_screen();
     let search = ui::search::SearchView::new(spotify.clone(), queue.clone());
-    cursive.add_fullscreen_layer(search.view);
+    cursive.add_fullscreen_layer(
+        LinearLayout::new(cursive::direction::Orientation::Vertical)
+            .child(search.view)
+            .child(TextView::new_with_content(statusbar.clone())),
+    );
 
     let queuescreen = cursive.add_active_screen();
-    let mut queueview = ui::queue::QueueView::new(queue.clone(), spotify.clone());
-    cursive.add_fullscreen_layer(queueview.view.take().unwrap());
+    let mut queue_view = ui::queue::QueueView::new(queue.clone(), event_manager.clone());
+    cursive.add_fullscreen_layer(
+        LinearLayout::new(cursive::direction::Orientation::Vertical)
+            .child(queue_view.view.take().unwrap())
+            .child(TextView::new_with_content(statusbar.clone())),
+    );
+
+    let playlist_screen = cursive.add_active_screen();
+    let playlist_view =
+        ui::playlist::PlaylistView::new(spotify.clone(), queue.clone(), event_manager.clone());
+    cursive.add_fullscreen_layer(
+        LinearLayout::new(cursive::direction::Orientation::Vertical)
+            .child(playlist_view.view)
+            // .child(TextView::new_with_content(statusbar.clone())),
+            .child(BoxView::with_min_height(
+                1,
+                TextView::new_with_content(statusbar.clone()),
+            )),
+    );
 
     let logscreen = cursive.add_active_screen();
     let logview_scroller = ScrollView::new(logview).scroll_strategy(ScrollStrategy::StickToBottom);
     let logpanel = Panel::new(logview_scroller).title("Log");
-    cursive.add_fullscreen_layer(logpanel);
+    cursive.add_fullscreen_layer(
+        LinearLayout::new(cursive::direction::Orientation::Vertical)
+            .child(logpanel)
+            .child(TextView::new_with_content(statusbar.clone())),
+    );
 
-    cursive.add_global_callback(Key::F1, move |s| {
-        s.set_screen(logscreen);
-    });
+    let screen_idx = Arc::new(AtomicUsize::new(0));
 
     {
-        let ev = event_manager.clone();
-        cursive.add_global_callback(Key::F2, move |s| {
-            s.set_screen(queuescreen);
-            ev.send(Event::Queue(QueueChange::Show));
+        let screen_idx = screen_idx.clone();
+        cursive.add_global_callback(Key::F1, move |s| {
+            s.set_screen(logscreen);
+            screen_idx.store(0, Ordering::Relaxed);
         });
     }
 
-    cursive.add_global_callback(Key::F3, move |s| {
-        s.set_screen(searchscreen);
-    });
+    {
+        let event_manager = event_manager.clone();
+        let screen_idx = screen_idx.clone();
+        cursive.add_global_callback(Key::F2, move |s| {
+            s.set_screen(queuescreen);
+            screen_idx.store(1, Ordering::Relaxed);
+            event_manager.clone().send(Event::QueueUpdate);
+        });
+    }
+
+    {
+        let screen_idx = screen_idx.clone();
+        cursive.add_global_callback(Key::F3, move |s| {
+            screen_idx.store(2, Ordering::Relaxed);
+            s.set_screen(searchscreen);
+        });
+    }
+
+    {
+        let screen_idx = screen_idx.clone();
+        cursive.add_global_callback(Key::F4, move |s| {
+            screen_idx.store(3, Ordering::Relaxed);
+            s.set_screen(playlist_screen);
+        });
+    }
+
+    {
+        let screen_idx = screen_idx.clone();
+        let screen_order = vec![logscreen, queuescreen, searchscreen, playlist_screen];
+        let event_manager = event_manager.clone();
+        cursive.add_global_callback(Key::Tab, move |s| {
+            let idx = screen_idx.fetch_add(1, Ordering::Relaxed);
+            s.set_screen(screen_order[(idx + 1) % screen_order.len()]);
+            event_manager.clone().send(Event::QueueUpdate);
+        });
+    }
+
+    let fps = 60;
+
+    cursive.set_fps(fps);
+
+    let mut current_track: Option<FullTrack> = None;
+    let mut ticks = 0;
+    let mut increment_ticks = false;
+
+    {
+        let event_manager = event_manager.clone();
+        cursive.add_global_callback('<', move |_s| {
+            event_manager.send(Event::SeekTo(0));
+        });
+    }
+
+    {
+        let event_manager = event_manager.clone();
+        cursive.add_global_callback(Key::Right, move |_s| {
+            event_manager.send(Event::SeekForward(10_000));
+        });
+    }
+
+    {
+        let event_manager = event_manager.clone();
+        cursive.add_global_callback(Key::Left, move |_s| {
+            event_manager.send(Event::SeekBackward(10_000));
+        });
+    }
 
     // cursive event loop
     while cursive.is_running() {
         cursive.step();
+        if ticks % fps == 0 {
+            if let Some(ref current_track) = current_track {
+                // TODO cache the track name and only change the time.
+                statusbar.set_content(format!(
+                    "{} - {} | {}/{}",
+                    current_track
+                        .artists
+                        .iter()
+                        .map(|a| a.name.clone())
+                        .collect::<Vec<String>>()
+                        .join(", "),
+                    current_track.name,
+                    ticks / fps,
+                    current_track.duration_ms / 1000
+                ));
+            }
+        }
+        if increment_ticks {
+            ticks += 1;
+        }
+
         for event in event_manager.msg_iter() {
-            trace!("event received");
+            trace!("event received {}", event);
             match event {
-                Event::Queue(ev) => queueview.handle_ev(&mut cursive, ev),
-                Event::Player(state) => spotify.updatestate(state),
+                Event::QueueUpdate => {
+                    queue_view.redraw(&mut cursive);
+                    if spotify.is_stopped() && !queue.lock().unwrap().is_empty() {
+                        event_manager.send(Event::CheckQueue);
+                    }
+                }
+                Event::QueueAdd(track) => {
+                    let mut queue = queue.lock().unwrap();
+                    if queue.is_empty() && current_track.is_none() {
+                        event_manager.send(Event::Play(track));
+                    } else {
+                        queue.enqueue(track);
+                    }
+                }
+                Event::QueueRemove(i) => {
+                    queue.lock().unwrap().remove(i);
+                }
+                Event::SongChange(track) => {
+                    trace!("New track: {}", track.name);
+                    // statusbar.set_content(format!("{}", track.name));
+                    current_track = Some(track);
+                    ticks = 0;
+                }
+                Event::PlayState(state) => {
+                    match &state {
+                        spotify::PlayerState::Playing => {
+                            increment_ticks = true;
+                        }
+                        spotify::PlayerState::Paused => {
+                            increment_ticks = false;
+                        }
+                        spotify::PlayerState::Stopped => {
+                            current_track = None;
+                            ticks = 0;
+                            increment_ticks = false;
+                        }
+                    }
+                    spotify.updatestate(state);
+                }
+                Event::Play(track) => {
+                    use librespot::core::spotify_id::SpotifyId;
+
+                    spotify.updatestate(spotify::PlayerState::Playing);
+                    let trackid = SpotifyId::from_base62(&track.id).expect("could not load track");
+                    spotify.load(trackid);
+                    spotify.play();
+                    event_manager.send(Event::SongChange(track));
+                }
+                Event::CheckQueue => {
+                    spotify.check_queue();
+                }
+                Event::SeekTo(ms) => {
+                    ticks = ms * fps / 1000;
+                    spotify.seek_ms(ms);
+                }
+                Event::SeekForward(ms) => {
+                    if let Some(ref current_track) = current_track {
+                        let ms = std::cmp::min(ticks * 1000 / fps + ms, current_track.duration_ms);
+                        ticks = ms * fps / 1000;
+                        spotify.seek_ms(ms);
+                    }
+                }
+                Event::SeekBackward(ms) => {
+                    if let Some(_) = current_track {
+                        let ms = std::cmp::max(ticks * 1000 / fps, ms) - ms;
+                        ticks = ms * fps / 1000;
+                        spotify.seek_ms(ms);
+                    }
+                }
             }
         }
     }
