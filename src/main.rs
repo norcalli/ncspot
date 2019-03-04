@@ -9,8 +9,11 @@ use std::sync::Mutex;
 
 use log::trace;
 
+use cursive::align;
+use cursive::direction;
 use cursive::event::Key;
 use cursive::traits::Identifiable;
+use cursive::view::Boxable;
 use cursive::view::ScrollStrategy;
 use cursive::views::{self, *};
 use cursive::Cursive;
@@ -118,14 +121,26 @@ fn main() {
         });
     }
 
-    let mut statusbar = TextContent::new("");
+    let mut track_info = TextContent::new("");
+    let mut playback_info = TextContent::new("");
+    let counter = cursive::utils::Counter::new(0);
+
+    let make_statusbar = || {
+        LinearLayout::horizontal()
+            .child(TextView::new_with_content(track_info.clone()).h_align(align::HAlign::Left))
+            // .child(DummyView.full_width())
+            .child(DummyView)
+            .child(ProgressBar::new().with_value(counter.clone()).full_width())
+            .child(DummyView)
+            .child(TextView::new_with_content(playback_info.clone()).h_align(align::HAlign::Right))
+    };
 
     let searchscreen = cursive.active_screen();
     let search = ui::search::SearchView::new(spotify.clone(), queue.clone());
     cursive.add_fullscreen_layer(
         LinearLayout::new(cursive::direction::Orientation::Vertical)
             .child(search.view)
-            .child(TextView::new_with_content(statusbar.clone())),
+            .child(make_statusbar()),
     );
 
     let queuescreen = cursive.add_active_screen();
@@ -133,20 +148,7 @@ fn main() {
     cursive.add_fullscreen_layer(
         LinearLayout::new(cursive::direction::Orientation::Vertical)
             .child(queue_view.view.take().unwrap())
-            .child(TextView::new_with_content(statusbar.clone())),
-    );
-
-    let playlist_screen = cursive.add_active_screen();
-    let playlist_view =
-        ui::playlist::PlaylistView::new(spotify.clone(), queue.clone(), event_manager.clone());
-    cursive.add_fullscreen_layer(
-        LinearLayout::new(cursive::direction::Orientation::Vertical)
-            .child(playlist_view.view)
-            // .child(TextView::new_with_content(statusbar.clone())),
-            .child(BoxView::with_min_height(
-                1,
-                TextView::new_with_content(statusbar.clone()),
-            )),
+            .child(make_statusbar()),
     );
 
     let logscreen = cursive.add_active_screen();
@@ -155,16 +157,25 @@ fn main() {
     cursive.add_fullscreen_layer(
         LinearLayout::new(cursive::direction::Orientation::Vertical)
             .child(logpanel)
-            .child(TextView::new_with_content(statusbar.clone())),
+            .child(make_statusbar()),
+    );
+
+    let playlist_screen = cursive.add_active_screen();
+    let playlist_view =
+        ui::playlist::PlaylistView::new(spotify.clone(), queue.clone(), event_manager.clone());
+    cursive.add_fullscreen_layer(
+        LinearLayout::new(cursive::direction::Orientation::Vertical)
+            .child(playlist_view.view)
+            .child(make_statusbar()),
     );
 
     let screen_idx = Arc::new(AtomicUsize::new(0));
 
     {
         let screen_idx = screen_idx.clone();
-        cursive.add_global_callback(Key::F1, move |s| {
+        cursive.add_global_callback(Key::F4, move |s| {
             s.set_screen(logscreen);
-            screen_idx.store(0, Ordering::Relaxed);
+            screen_idx.store(3, Ordering::Relaxed);
         });
     }
 
@@ -188,15 +199,15 @@ fn main() {
 
     {
         let screen_idx = screen_idx.clone();
-        cursive.add_global_callback(Key::F4, move |s| {
-            screen_idx.store(3, Ordering::Relaxed);
+        cursive.add_global_callback(Key::F1, move |s| {
+            screen_idx.store(0, Ordering::Relaxed);
             s.set_screen(playlist_screen);
         });
     }
 
     {
         let screen_idx = screen_idx.clone();
-        let screen_order = vec![logscreen, queuescreen, searchscreen, playlist_screen];
+        let screen_order = vec![playlist_screen, queuescreen, searchscreen, logscreen];
         let event_manager = event_manager.clone();
         cursive.add_global_callback(Key::Tab, move |s| {
             let idx = screen_idx.fetch_add(1, Ordering::Relaxed);
@@ -239,18 +250,13 @@ fn main() {
         cursive.step();
         if ticks % fps == 0 {
             if let Some(ref current_track) = current_track {
-                // TODO cache the track name and only change the time.
-                statusbar.set_content(format!(
-                    "{} - {} | {}/{}",
-                    current_track
-                        .artists
-                        .iter()
-                        .map(|a| a.name.clone())
-                        .collect::<Vec<String>>()
-                        .join(", "),
-                    current_track.name,
-                    ticks / fps,
-                    current_track.duration_ms / 1000
+                counter.set((ticks * 1000 / fps * 1_00 / current_track.duration_ms) as usize);
+                playback_info.set_content(format!(
+                    "{}:{:02} / {}:{:02}",
+                    (ticks / fps) / 60,
+                    (ticks / fps) % 60,
+                    (current_track.duration_ms / 1000) / 60,
+                    (current_track.duration_ms / 1000) % 60,
                 ));
             }
         }
@@ -281,6 +287,16 @@ fn main() {
                 Event::SongChange(track) => {
                     trace!("New track: {}", track.name);
                     // statusbar.set_content(format!("{}", track.name));
+                    track_info.set_content(format!(
+                        "{} - {}",
+                        track
+                            .artists
+                            .iter()
+                            .map(|a| a.name.clone())
+                            .collect::<Vec<String>>()
+                            .join(", "),
+                        track.name,
+                    ));
                     current_track = Some(track);
                     ticks = 0;
                 }

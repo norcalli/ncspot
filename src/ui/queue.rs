@@ -1,4 +1,4 @@
-use cursive::direction::Orientation;
+use cursive::direction::Direction;
 use cursive::event::Key;
 use cursive::traits::Boxable;
 use cursive::traits::Identifiable;
@@ -72,7 +72,7 @@ impl QueueView {
         let scrollable = ScrollView::new(queuelist.full_width())
             .full_width()
             .full_height();
-        let layout = LinearLayout::new(Orientation::Vertical).child(scrollable);
+        let layout = LinearLayout::vertical().child(scrollable);
         let panel = Panel::new(layout).title("Queue");
 
         QueueView {
