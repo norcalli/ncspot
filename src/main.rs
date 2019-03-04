@@ -12,7 +12,6 @@ use log::trace;
 use cursive::align;
 use cursive::direction;
 use cursive::event::Key;
-use cursive::traits::Identifiable;
 use cursive::view::Boxable;
 use cursive::view::ScrollStrategy;
 use cursive::views::{self, *};
@@ -147,7 +146,7 @@ fn main() {
     let mut queue_view = ui::queue::QueueView::new(queue.clone(), event_manager.clone());
     cursive.add_fullscreen_layer(
         LinearLayout::new(cursive::direction::Orientation::Vertical)
-            .child(queue_view.view.take().unwrap())
+            .child(queue_view.view)
             .child(make_statusbar()),
     );
 
@@ -268,7 +267,7 @@ fn main() {
             trace!("event received {}", event);
             match event {
                 Event::QueueUpdate => {
-                    queue_view.redraw(&mut cursive);
+                    ui::queue::QueueView::redraw(&mut cursive, queue.clone());
                     if spotify.is_stopped() && !queue.lock().unwrap().is_empty() {
                         event_manager.send(Event::CheckQueue);
                     }
