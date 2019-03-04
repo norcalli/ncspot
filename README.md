@@ -13,13 +13,6 @@ and change. The feature set is still very limited. Also, as this is my first
 contact with Rust, some design decisions may need to be reworked in the
 future. Contributions welcome, but please be kind ;)
 
-## Requirements
-
-* Rust
-* `libpulse-dev` (or `portaudio-dev`, if you want to use the PortAudio backend)
-* `libncurses-dev` and `libssl-dev`
-* A Spotify premium account
-
 ## Usage
 
 * Set your login credentials (see configuration)
@@ -40,6 +33,11 @@ have them configurable.
 * `Shift-p` toggles playback of a track
 * `Shift-s` stops a track
 * `q` quits ncspot
+
+## Requirements
+
+* Rust
+* `libpulse-dev` (or `portaudio-dev`, if you want to use the PortAudio backend)
 
 ## Configuration
 
