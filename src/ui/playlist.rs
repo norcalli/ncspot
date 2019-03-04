@@ -1,5 +1,4 @@
 use cursive::direction::Orientation;
-use cursive::event::Key;
 use cursive::traits::Boxable;
 use cursive::traits::Identifiable;
 use cursive::views::*;
@@ -8,8 +7,6 @@ use cursive_tree_view::{Placement, TreeView};
 use derive_more::Display;
 use std::sync::Arc;
 use std::sync::Mutex;
-
-use librespot::core::spotify_id::SpotifyId;
 
 use rspotify::spotify::model::playlist::{PlaylistTrack, SimplifiedPlaylist};
 
@@ -53,7 +50,7 @@ impl PlaylistView {
 
         {
             let _queue = queue.clone();
-            let spotify = spotify.clone();
+            let _spotify = spotify.clone();
             tree_view.set_on_submit(move |siv: &mut Cursive, row: usize| {
                 siv.call_on_id(TREE_ID, |tree_view: &mut TreeView<TreeEntry>| {
                     if let Some(&TreeEntry::Track(ref playlist_track)) = tree_view.borrow_item(row)

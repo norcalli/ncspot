@@ -10,11 +10,10 @@ use std::sync::Mutex;
 use log::trace;
 
 use cursive::align;
-use cursive::direction;
 use cursive::event::Key;
 use cursive::view::Boxable;
 use cursive::view::ScrollStrategy;
-use cursive::views::{self, *};
+use cursive::views::*;
 use cursive::Cursive;
 
 use librespot::core::spotify_id::SpotifyId;
@@ -143,7 +142,7 @@ fn main() {
     );
 
     let queuescreen = cursive.add_active_screen();
-    let mut queue_view = ui::queue::QueueView::new(queue.clone(), event_manager.clone());
+    let queue_view = ui::queue::QueueView::new(queue.clone(), event_manager.clone());
     cursive.add_fullscreen_layer(
         LinearLayout::new(cursive::direction::Orientation::Vertical)
             .child(queue_view.view)

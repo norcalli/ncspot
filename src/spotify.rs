@@ -12,7 +12,6 @@ use librespot::playback::player::Player;
 
 use rspotify::spotify::client::Spotify as SpotifyAPI;
 use rspotify::spotify::model::search::SearchTracks;
-use rspotify::spotify::model::track::FullTrack;
 
 use failure::Error;
 
@@ -277,18 +276,6 @@ impl Spotify {
         self.channel
             .unbounded_send(WorkerCommand::CheckQueue)
             .unwrap();
-    }
-
-    pub fn is_playing(&self) -> bool {
-        let state = self
-            .state
-            .read()
-            .expect("could not acquire read lock on player state");
-        if let PlayerState::Playing = *state {
-            true
-        } else {
-            false
-        }
     }
 
     pub fn is_stopped(&self) -> bool {

@@ -1,4 +1,3 @@
-use cursive::direction::Direction;
 use cursive::event::Key;
 use cursive::traits::Boxable;
 use cursive::traits::Identifiable;
@@ -9,14 +8,8 @@ use cursive::Cursive;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use librespot::core::spotify_id::SpotifyId;
-
-use rspotify::spotify::model::track::FullTrack;
-
 use crate::events::{Event, EventManager};
 use crate::queue::Queue;
-use crate::spotify::{PlayerState, Spotify};
-use crate::ui::trackbutton::TrackButton;
 
 pub struct QueueView {
     pub view: OnEventView<Panel<LinearLayout>>,

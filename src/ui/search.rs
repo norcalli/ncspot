@@ -15,7 +15,6 @@ use crate::ui::trackbutton::TrackButton;
 
 pub struct SearchView {
     pub view: Panel<LinearLayout>,
-    queue: Arc<Mutex<Queue>>,
 }
 
 impl SearchView {
@@ -55,11 +54,9 @@ impl SearchView {
     }
 
     pub fn new(spotify: Arc<Spotify>, queue: Arc<Mutex<Queue>>) -> SearchView {
-        let spotify_ref = spotify.clone();
-        let queue_ref = queue.clone();
         let searchfield = EditView::new()
             .on_submit(move |s, input| {
-                SearchView::search_handler(s, input, spotify_ref.clone(), queue_ref.clone());
+                SearchView::search_handler(s, input, spotify.clone(), queue.clone());
             })
             .with_id("search_edit")
             .full_width()
@@ -72,7 +69,6 @@ impl SearchView {
         let rootpanel = Panel::new(layout).title("Search");
         return SearchView {
             view: rootpanel,
-            queue: queue,
         };
     }
 }
