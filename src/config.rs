@@ -1,6 +1,6 @@
+use serde_derive::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::prelude::*;
-use serde_derive::{Serialize, Deserialize};
 
 pub const CLIENT_ID: &str = "d420a117a32841c2b3474932e49fb54b";
 

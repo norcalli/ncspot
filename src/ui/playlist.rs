@@ -13,9 +13,9 @@ use librespot::core::spotify_id::SpotifyId;
 
 use rspotify::spotify::model::playlist::{PlaylistTrack, SimplifiedPlaylist};
 
+use crate::events::{Event, EventManager};
 use crate::queue::Queue;
 use crate::spotify::Spotify;
-use crate::events::{Event, EventManager};
 
 pub struct PlaylistView {
     pub view: Panel<LinearLayout>,
@@ -36,7 +36,11 @@ pub enum TreeEntry {
 const TREE_ID: &str = "playlist_tree";
 
 impl PlaylistView {
-    pub fn new(spotify: Arc<Spotify>, queue: Arc<Mutex<Queue>>, event_manager: EventManager) -> PlaylistView {
+    pub fn new(
+        spotify: Arc<Spotify>,
+        queue: Arc<Mutex<Queue>>,
+        event_manager: EventManager,
+    ) -> PlaylistView {
         let spotify = spotify.clone();
 
         let mut tree_view = TreeView::new();
