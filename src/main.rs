@@ -175,7 +175,7 @@ fn main() {
         let screen_idx = screen_idx.clone();
         cursive.add_global_callback(Key::F4, move |s| {
             s.set_screen(logscreen);
-            screen_idx.store(3, Ordering::Relaxed);
+            screen_idx.store(2, Ordering::Relaxed);
         });
     }
 
@@ -207,7 +207,7 @@ fn main() {
 
     {
         let screen_idx = screen_idx.clone();
-        let screen_order = vec![playlist_screen, queuescreen, searchscreen, logscreen];
+        let screen_order = vec![playlist_screen, queuescreen, searchscreen];
         let event_manager = event_manager.clone();
         cursive.add_global_callback(Key::Tab, move |s| {
             let idx = screen_idx.fetch_add(1, Ordering::Relaxed);
