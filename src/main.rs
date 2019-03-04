@@ -244,10 +244,12 @@ fn main() {
         });
     }
 
+    let update_tick = fps / 4;
+
     // cursive event loop
     while cursive.is_running() {
         cursive.step();
-        if ticks % fps == 0 {
+        if ticks % update_tick == 0 {
             if let Some(ref current_track) = current_track {
                 counter.set((ticks * 1000 / fps * 1_00 / current_track.duration_ms) as usize);
                 playback_info.set_content(format!(
